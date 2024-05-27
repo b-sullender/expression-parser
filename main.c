@@ -194,6 +194,7 @@ int main()
     while (true)
     {
         printf("Enter expression: ");
+        fflush(stdout);
         if (fgets(expre, 255, stdin) != expre) {
             perror("Error reading expression\n");
             return EXIT_FAILURE;
