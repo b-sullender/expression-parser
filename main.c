@@ -30,10 +30,16 @@ typedef enum {
     END
 } TokenType;
 
+// The hint for the next token, for negative factors
+typedef enum {
+    NONE,
+    OPERATOR,
+    FACTOR
+} TokenHint;
+
 // Define token structure
 typedef struct {
     TokenType type;
-    int precedence;
     int value;
 } Token;
 
@@ -44,7 +50,7 @@ typedef struct {
 } ParserContext;
 
 // Function to get the next token
-void getNextToken(ParserContext* context)
+void getNextToken(ParserContext* context, int* precedence, TokenHint hint)
 {
     char c = *context->input++;
     while (c == ' ' || c == '\r' || c == '\n' || c == '\t') {
@@ -53,14 +59,9 @@ void getNextToken(ParserContext* context)
 
     if (c == '\0') {
         context->token.type = END;
-        context->token.precedence = 0;
         context->input--;
-        return;
-    }
-
-    if (c >= '0' && c <= '9') {
+    } else if (c >= '0' && c <= '9') {
         context->token.type = NUMBER;
-        context->token.precedence = 0;
         context->token.value = c - '0';
         c = *context->input++;
         while (c >= '0' && c <= '9') {
@@ -70,64 +71,84 @@ void getNextToken(ParserContext* context)
         context->input--;
     } else if (c == '+') {
         context->token.type = PLUS;
-        context->token.precedence = 700;
+        *precedence = 700;
     } else if (c == '-') {
-        context->token.type = MINUS;
-        context->token.precedence = 700;
+        if ((hint == FACTOR) && (*context->input >= '0' && *context->input <= '9'))
+        {
+            c = *context->input++;
+            context->token.type = NUMBER;
+            context->token.value = c - '0';
+            c = *context->input++;
+            while (c >= '0' && c <= '9') {
+                context->token.value = context->token.value * 10 + (c - '0');
+                c = *context->input++;
+            }
+            context->token.value = -context->token.value;
+            context->input--;
+        }
+        else
+        {
+            context->token.type = MINUS;
+            *precedence = 700;
+        }
     } else if (c == '*') {
         context->token.type = MULTIPLY;
-        context->token.precedence = 800;
+        *precedence = 800;
     } else if (c == '/') {
         context->token.type = DIVIDE;
-        context->token.precedence = 800;
+        *precedence = 800;
     } else if (c == '%') {
         context->token.type = REMAINDER;
-        context->token.precedence = 800;
+        *precedence = 800;
     } else if (c == '&') {
         context->token.type = BIT_AND;
-        context->token.precedence = 500;
+        *precedence = 500;
     } else if (c == '|') {
         context->token.type = BIT_OR;
-        context->token.precedence = 300;
+        *precedence = 300;
     } else if (c == '^') {
         context->token.type = BIT_XOR;
-        context->token.precedence = 400;
+        *precedence = 400;
     } else if (c == '<' && *(context->input) == '<') {
         context->token.type = BIT_LSHIFT;
-        context->token.precedence = 600;
+        *precedence = 600;
         context->input++;
     } else if (c == '>' && *(context->input) == '>') {
         context->token.type = BIT_RSHIFT;
-        context->token.precedence = 600;
+        *precedence = 600;
         context->input++;
     } else if (c == '(') {
         context->token.type = LPAREN;
-        context->token.precedence = 900;
+        *precedence = 900;
     } else if (c == ')') {
         context->token.type = RPAREN;
-        context->token.precedence = 900;
+        *precedence = 900;
     }
 }
 
 // Forward declaration
-int parseExpression(ParserContext* context, int minPrecedence);
+int parseExpression(ParserContext* context, int* precedence, int minPrecedence);
 
 // Function to parse a factor
-int parseFactor(ParserContext* context)
+int parseFactor(ParserContext* context, int* precedence)
 {
     int value;
 
     if (context->token.type == NUMBER) {
         value = context->token.value;
-        getNextToken(context);
+        getNextToken(context, precedence, OPERATOR);
     } else if (context->token.type == LPAREN) {
-        getNextToken(context);
-        value = parseExpression(context, context->token.precedence);
+        // Create a new precedence for operations in parentheses
+        int subPrecedence = 0;
+        // Parse the expression inside the parentheses
+        getNextToken(context, &subPrecedence, FACTOR);
+        value = parseExpression(context, &subPrecedence, 0);
+        // Check that we have a closing parenthesis
         if (context->token.type != RPAREN) {
             fprintf(stderr, "Error: Missing closing parenthesis\n");
             exit(EXIT_FAILURE);
         }
-        getNextToken(context);
+        getNextToken(context, precedence, OPERATOR);
     } else {
         fprintf(stderr, "Error: Unexpected token\n");
         exit(EXIT_FAILURE);
@@ -137,13 +158,13 @@ int parseFactor(ParserContext* context)
 }
 
 // Function to parse an expression
-int parseExpression(ParserContext* context, int minPrecedence)
+int parseExpression(ParserContext* context, int* precedence, int minPrecedence)
 {
     // Get the factor
-    int value = parseFactor(context);
+    int value = parseFactor(context, precedence);
 
     // Check that we can continue processing this term
-    while ((context->token.type != END) && (context->token.type != RPAREN) && (context->token.precedence > minPrecedence))
+    while ((context->token.type != END) && (context->token.type != RPAREN) && (*precedence >= minPrecedence))
     {
         // Check if we have a valid operator token
         if (context->token.type == NUMBER) {
@@ -151,12 +172,12 @@ int parseExpression(ParserContext* context, int minPrecedence)
             exit(EXIT_FAILURE);
         }
 
-        // Save current token
+        // Save current operator token
         Token token = context->token;
 
         // Get the factor/term to the right
-        getNextToken(context);
-        int term = parseExpression(context, token.precedence);
+        getNextToken(context, precedence, FACTOR);
+        int term = parseExpression(context, precedence, *precedence);
 
         // Perform the operation
         if (token.type == PLUS) {
@@ -205,10 +226,12 @@ int main()
 
         char* pInput = expre;
         ParserContext context;
+        memset(&context, 0, sizeof(ParserContext));
         context.input = pInput;
 
-        getNextToken(&context);
-        int result = parseExpression(&context, context.token.precedence);
+        int precedence = 0;
+        getNextToken(&context, &precedence, FACTOR);
+        int result = parseExpression(&context, &precedence, 0);
         if (context.token.type != END) {
             fprintf(stderr, "%s\n", "Error: Unexpected token\n");
             continue;
@@ -218,4 +241,3 @@ int main()
 
     return EXIT_SUCCESS;
 }
-
