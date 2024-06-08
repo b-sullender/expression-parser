@@ -119,10 +119,8 @@ void getNextToken(ParserContext* context, int* precedence, TokenHint hint)
         context->input++;
     } else if (c == '(') {
         context->token.type = LPAREN;
-        *precedence = 900;
     } else if (c == ')') {
         context->token.type = RPAREN;
-        *precedence = 900;
     }
 }
 
